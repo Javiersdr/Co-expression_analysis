@@ -1,0 +1,62 @@
+## Mfuzz
+Here, we will use [Mfuzz](https://www.bioconductor.org/packages/devel/bioc/vignettes/Mfuzz/inst/doc/Mfuzz.pdf). The most distinctive feature of this algorithm is its application of *fuzzy clustering* to RNA-seq time course data
+
+### Preprocessing for Mfuzz
+According to [their web](http://mfuzz.sysbiolab.eu) "replicated arrays in the exprs matrix are treated as independent by the mfuzz function i.e. they should be averagered prior to clustering or placed into different distinct ExpressionSet objects"
+```{r chunk dataMfuzz}
+
+# Calculate mean for every sample needed for Mfuzz
+colnames(expr_mat) <- gsub("_[1-9]","",colnames(expr_mat))
+data_mat_avg <- avearrays(expr_mat)
+```
+
+We need to turn our data into an **ExpressionSet**
+
+```{r chunk eset}
+eset <- new("ExpressionSet", exprs = data_mat_avg)
+eset <- filter.NA(eset, thres = eset_thres)
+eset_s <- standardise (eset)
+head (eset_s)
+```
+
+Now, we need to define the fuzzifier (m), and the number of clusters. However, we already defined the number of clusters in the beginning. You might want to use their function Dmin or any other way to estimate clusters prior to the analysis. The higher m gets, the more evenly all genes are assigned to each cluster. When m reaches infinity, all genes are assigned equally to every cluster
+```{r}
+# Estimate the fuzzifier
+m_estimate <- mestimate (eset_s)
+# Proceed with soft clustering using the c-means algorithm
+cl <- mfuzz (eset_s, c = n_clusters, m = m_estimate)
+```
+
+### Visualization
+Here we will examine the plots for each cluster over time. We can also compare these results with the ones obtained in WGCNA as a reference
+```{r mfuzzplot}
+png ("mfuzz_plot.png")
+mfuzz.plot (eset_s, cl = cl, mfrow = c(4,4), time.labels = time_labels, new.window = FALSE)
+dev.off()
+
+# I couldn't get it to work with the relative path for display, so I copy it here
+file.copy ("mfuzz_plot.png", paste0 (results_path, "mfuzz_", n_clusters, "_clusters.png"))
+```
+![Clusters plot](mfuzz_plot.png)
+
+### Save the data
+
+Finally, with the acore function, we can obtain the list of genes in each cluster along with their *module membership* value. The minimum value to belong to the cluster can be adjusted. In the tutorial they use 0.5
+```{r acore}
+mfuzz_genes <- acore (eset_s, cl, min.acore = 0.5)
+
+# Number of genes for every cluster
+cluster <- lapply (mfuzz_genes, nrow) 
+cluster <- rep (1:length(cluster), times = cluster)
+mfuzz_genes_cl <- do.call (rbind, mfuzz_genes) # bind them
+mfuzz_genes_cl$cluster <- cluster
+# Save them
+save_df (data_to_save = mfuzz_genes_cl,
+         data_name = paste0 ("mfuzz_genes_", n_clusters, "_clusters"),
+         row_names = FALSE)
+```
+
+You may want to check if everything went alright
+```{r mfuzz_table}
+head (mfuzz_genes_cl)
+```

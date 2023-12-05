@@ -1,0 +1,181 @@
+---
+title: "Gene co-expression analysis"
+subtitle: "WGCNA and Mfuzz"
+author: "Javier Santos"
+date: "`r format(Sys.time(), '%A %d, %B %Y. %X')`"
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+    toc_float: yes
+    toc_depth: 4
+    theme: simplex # cerulean, cosmo, flatly, journal, lumen, paper, readable, sandstone, simplex, spacelab, united, yeti
+    code_folding: "show"
+params:
+  NOTE: "<div class='alert alert-info'>***INFO:*** " # blue: Accessory info to notice or skim
+  TIP: "<div class='alert alert-success'>***TIP!*** " # green: info to be more successful
+  WARN: "<div class='alert alert-warning'>***ADVERTENCIA*** " # yellow: potential negative consequences
+  DANGER: "<div class='alert alert-danger'>***DANGER!*** " # red: action with dangerous consequences
+  # they can also be defined as params: or launchend in render() as params=list(...)
+  EXPAND: '<details  style="background-color: SeaShell; 
+                 border: 2px solid wheat;
+                 border-radius: 5px; 
+                 padding: 10px 10px 10px 10px;"> 
+                 <summary markdown="span" style="background-color: mintCream; 
+                 color: darkGreen; 
+                 padding: 3px 2px 3px 2px;">'
+---
+
+```{r setup, include=FALSE}
+library("knitr")
+opts_chunk$set(echo = TRUE, collapse = TRUE)
+T00 <- proc.time() # initial time
+
+my_computer <- Sys.info()[c(4, 1, 5, 7)]
+
+# message(), warning() and stop(), but not cat() or print(), result in alert markdown text
+# https://www.r-bloggers.com/2017/06/pretty-errors-warnings-and-messages-in-r-markdown/
+# https://yihui.org/knitr/hooks/
+# https://selbydavid.com/vignettes/alerts.html
+knit_hooks$set(
+   error = function(x, options) {
+     paste('\n\n<div class="alert alert-danger">',
+           gsub('##', '\n', gsub('^##\ Error', '**Error!**', x)),
+           '</div>', sep = '\n')
+   },
+   warning = function(x, options) {
+     paste('\n\n<div class="alert alert-warning">',
+           gsub('##', '\n', gsub('^##\ Advertencia:', '**Advertencia**', x)),
+           '</div>', sep = '\n')
+   },
+   message = function(x, options) {
+     paste('\n\n<div class="alert alert-info">',
+           gsub('##', '\n', paste("**Note:**", x)),
+           '</div>', sep = '\n')
+   }
+)
+```
+
+# Introduction
+This document shows a workflow to analyse RNA-seq data with **WGCNA** and **Mfuzz**, for co-expression network analyses. 
+
+# Configuration 
+```{r chunk 1, message = FALSE, warning = FALSE}
+library (WGCNA)
+library (tidyverse)
+library (limma)
+library (Mfuzz)
+library (gplots)
+library (DT)
+```
+
+```{r variables, include = FALSE}
+# Customizable variables are here
+initial_data <- "~/R/Olivos/CTFnormalisedCPMs-2023-01-02_14.59.24.tsv"
+trait_data <- "~/R/Analisis_Coexpresion/trait_data.tsv"
+results_path <- "~/R/Analisis_Coexpresion/results_CoEx/"
+current_date <- format (Sys.time (), "%F_%H.%M.%S")
+results_path <- paste0 (results_path, current_date, "/")
+dir.create (results_path)
+# These belong to WGCNA
+Do_WGCNA <- TRUE
+plot_heatmap <- FALSE
+min_module_size <- 30
+merge_cut_height <- 0.25
+power_diss <- 10
+DEG_data <- "~/R/Olivos/AllGenes_TREAT_allContrast_P-0.1_FC-1.2_2022-07-28_13.10.30.tsv"
+DEG_columns <- 27:32
+# These belong to Mfuzz
+Do_Mfuzz <- TRUE
+eset_thres <- 0.25
+n_clusters <- 8
+time_labels <- c (0,1,3,6)
+
+# to easily save data frames
+save_df <- function (data_to_save,
+                          data_name,
+                          path = results_path,
+                          col_names = TRUE,
+                          row_names = FALSE) {
+    file_to_save <- paste0 (path, data_name, ".tsv")
+    write.table (data_to_save,
+                 file = file_to_save,
+                 sep = "\t",
+                 quote = FALSE,
+                 col.names = col_names,
+                 row.names = row_names)
+}
+```
+
+# Customizable variables
+
+| Variable         | Value                                          |
+|:----------------|:----------------------------------------------:|
+| Execute WGCNA | `r Do_WGCNA`|
+| Execute Mfuzz | `r Do_Mfuzz`|
+| Gene expression data | `r initial_data`|
+| Trait data | `r trait_data`|
+|  DEG data | `r DEG_data`|
+| Minimum module size | `r min_module_size`|
+| Cutoff to merge modules | `r merge_cut_height`|
+| Heatmap | `r plot_heatmap`|
+| Gene expression cutoff for Mfuzz |`r eset_thres`|
+| Number of clusters | `r n_clusters`|
+| Time labels | `r time_labels`|
+| Results path | `r results_path`|
+
+
+# Preprocessing
+Here we will take our data matrix and prepare it for the analysis. Specifically, we will "tidy" and keep q75. Since the data is already normalized, we may skip that step
+
+```{r chunk data1, message = FALSE}
+data <- read_delim(initial_data)
+
+# We turn the data frame into a matrix
+names(data)[1] = "GeneID"
+data_matrix <- as.matrix(data[,-1])
+row.names(data_matrix) = data$GeneID
+
+# Keep 0.25
+q75 <- quantile (data_matrix, 0.75)
+expr_mat <- data_matrix[rowSums (data_matrix > q75) == ncol(data_matrix), ]
+```
+
+# Co-expression analysis
+Co-expression analysis will be carried out in both WGCNA and Mfuzz. The variables **Do_WGCNA** and **Do_Mfuzz** will determine whether only one type of analysis is executed or both. A co-expression analysis essentially works by connecting all genes through the correlation of their expression profiles across samples. Genes with sufficiently similar expression profiles are grouped into modules
+
+
+```{r, child=if (Do_WGCNA) 'WGCNA.Rmd'}
+```
+
+```{r, child=if (Do_Mfuzz) 'Mfuzz.Rmd'}
+```
+
+# Bibliography
+* [WGCNA: an R package for weighted correlation network analysis](https://bmcbioinformatics.biomedcentral.com/articles/10.1186/1471-2105-9-559)
+* [Mfuzz: A software package for soft clustering of microarray data](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC2139991/)
+
+# About this session
+
+`r params$NOTE`
+The script was executed in the following computer: 
+
+`r paste0(names(my_computer)[1], ": **", my_computer[1], "**\n\n", 
+          names(my_computer)[2], ": **", my_computer[2], "**\n\n",
+          names(my_computer)[3], ": **", my_computer[3], "**\n\n",
+          names(my_computer)[4], ": **", my_computer[4], "**") `.
+</div>
+
+```{r tiempo_total, results='hold', echo=FALSE}
+Tff <- proc.time() # final time
+T_total <- Tff - T00
+```
+
+Elapsed time: **`r round(T_total[[3]]/60, digits = 2)` min**.
+
+```{r sessionInfo, results='hold', echo=FALSE}
+cat("Variables in memory:\n")
+ls()
+cat("\n")
+sessionInfo()
+```

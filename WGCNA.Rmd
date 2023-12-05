@@ -1,0 +1,509 @@
+## WGCNA
+Now, a demonstration of the preparation and analysis of olive RNA-seq time-course data using **[WGCNA](https://horvath.genetics.ucla.edu/html/CoexpressionNetwork/Rpackages/WGCNA/#WGCNAIntro)** will be presented. WGCNA is a widely used R library for co-expression network analysis. They provide numerous tutorials on their official page to guide users on the best methodology for different types of data
+
+### Preprocessing for WGCNA
+We prepare our matrix for WGCNA, where we need it to be such that rows -> samples and columns -> genes, so we transpose it. We also load our phenotypic data
+```{r chunk dataWGCNA}
+enableWGCNAThreads()
+# IT'S VERY IMPORTANT TO TRANSPOSE THE MATRIX
+input_mat <- t(expr_mat)
+# Load trait data here
+datTraits <- read.table (trait_data)
+```
+
+### Power selection
+Now it's time to choose the most suitable power ( $\beta$ ) to which we will raise our data matrix to make it resemble a scale-free network, facilitating the clustering process.
+**[Why "signed network"?](https://peterlangfelder.com/2018/11/25/signed-or-unsigned-which-network-type-is-preferable/)**.
+```{r chunk powers}
+# Choose some powers to represent and check which one fits best
+powers = c(c(1:10), seq (from = 12, to = 30, by = 2))
+power_soft <- pickSoftThreshold(input_mat,
+                         powerVector = powers,
+                         networkType = "signed",
+                         verbose = 5)
+
+# We use this formula to try to find the best power because the model couldn't get to 0.8
+power_cutoff = power_soft$fitIndices$SFT.R.sq[20] * 0.9
+
+par(mfrow = c(1,2));
+cex1 = 0.9;
+
+plot(power_soft$fitIndices[, 1],
+     -sign(power_soft$fitIndices[, 3]) * power_soft$fitIndices[, 2],
+     xlab = "Soft Threshold (power)", 
+     ylab = "Scale Free Topology Model Fit, signed R^2",
+     main = paste("Scale independence")
+)
+text(power_soft$fitIndices[, 1], 
+     -sign(power_soft$fitIndices[, 3]) * power_soft$fitIndices[, 2],
+     labels = powers, cex = cex1, col = "red"
+)
+abline(h = power_cutoff, col = "red")
+
+plot(power_soft$fitIndices[, 1],
+     power_soft$fitIndices[, 5],
+     xlab = "Soft Threshold (power)",
+     ylab = "Mean Connectivity", 
+     type = "n", 
+     main = paste("Mean connectivity")
+)
+text(power_soft$fitIndices[, 1], 
+     power_soft$fitIndices[, 5], 
+     labels = powers, 
+     cex = cex1, col = "red")
+
+# This will be the power for the adjacency matrix
+picked_power = power_soft$fitIndices %>% 
+  filter ((-sign(slope) * SFT.R.sq) > power_cutoff) %>% 
+  arrange () %>% 
+  .[1,1]
+```
+
+### Building the network
+Now we can choose between two methodologies to follow. Both will yield similar results based on the parameters provided, and many steps are common, but the step-by-step method is more customizable
+
+### Automatic method
+Here, we are going to construct the network automatically. In this method, the most crucial function is blockwiseModules, which allows us to build the network in a single step. However, it has a lot of parameters which should be studied thoroughly
+
+#### Module creation
+This is the main difference compared to the other method; this function consolidates the steps of dissimilarity matrix construction and module merging into a single function. It's worth taking a look at all the parameters in the **[manual](http://rsync.udc.es/CRAN/web/packages/WGCNA/WGCNA.pdf)**
+```{r chunk bwm}
+temp_cor <- cor       # WGCNA cor will be used
+cor <- WGCNA::cor    
+# for type = "unsigned", adjacency = |cor|^power;
+# for type = "signed", adjacency = (0.5 * (1+cor) )^power; for type = "signed hybrid", adjacency = cor^power if cor>0 and 0 otherwise; and for type = "distance", adjacency = (1-(dist/max(dist))^2)^power
+red <- blockwiseModules(input_mat,             
+                          power = picked_power,                
+                          networkType = "signed",
+                          TOMtype = "signed", # * explained
+                          deepSplit = 2, #  0 to 4, to make it more sensitive and get more modules
+                          pamRespectsDendro = F,
+                          minModuleSize = min_module_size,
+                          maxBlockSize = 6000,
+                          reassignThreshold = 0, 
+                          mergeCutHeight = merge_cut_height,
+                          saveTOMs = TRUE,
+                          numericLabels = TRUE,
+                          verbose = 3)
+
+cor <- temp_cor     # Return it to original cor
+```
+
+* There's an interesting [publication]((https://horvath.genetics.ucla.edu/html/CoexpressionNetwork/Rpackages/WGCNA/TechnicalReports/signedTOM.pdf)) by Peter Langfelder, one of the creators of WGCNA, regarding the *TOMtype* parameter
+
+#### Dendrogram
+Simply prepare the data to plot the dendrogram
+```{r chunk l2c}
+module_colors <- labels2colors(red$colors)
+
+plotDendroAndColors(
+  red$dendrograms[[1]], 
+  module_colors[red$blockGenes[[1]]],
+  "Module colors",
+  dendroLabels = FALSE, 
+  hang = 0.03,
+  addGuide = TRUE, 
+  guideHang = 0.05)
+```
+
+#### Eigengene obtention
+Obtain the ***eigengenes***, which can be defined as the principal component of each module
+```{r chunk ME}
+mergedMEs_auto <- moduleEigengenes(input_mat, module_colors)$eigengenes
+mergedMEs_auto <- orderMEs(mergedMEs_auto)
+```
+
+### Step by step method
+Here, constructing the topological overlap matrix, performing hierarchical clustering, building the modules, and merging them is separated in different steps, making it more customizable, as said before
+
+#### Topological overlap matrix (TOM)
+We construct our **topological overlap matrix (TOM)** and our gene tree "manually" like this: calculate the adjacency, then build the matrix, and finally, calculate the dissimilarity matrix for hierarchical clustering.
+```{r TOM}
+adjacency <- adjacency (input_mat, power = picked_power)
+TOM <- TOMsimilarity(adjacency)
+dissTOM <- 1 - TOM
+
+gene_tree <- hclust (as.dist(dissTOM), method = "average")
+```
+
+#### Module creation
+Again, we are going to plot the dendrogram; some of the parameters will ring a bell if the automatic method has been tried, as they can be found in the blockWiseModules function
+```{r modulosSBS}
+dynamic_mods <- cutreeDynamic(dendro = gene_tree, distM = dissTOM,
+                             deepSplit = 2, pamRespectsDendro = FALSE,
+                             minClusterSize = min_module_size)
+dynamic_colors <- labels2colors(dynamic_mods)
+plotDendroAndColors(gene_tree, dynamic_colors, "Dynamic Tree Cut",
+                    dendroLabels = FALSE, hang = 0.03, 
+                    addGuide = TRUE, guideHang = 0.05,
+                    main = "Dendrogram and initial modules") 
+```
+
+#### Module merging and eigengegenes
+Obtain the eigengenes, merge the modules and compare before and after 
+```{r eigen}
+ME_list <- moduleEigengenes(input_mat, colors = dynamic_colors)
+MEs_SBS <- ME_list$eigengenes
+ME_diss <- 1 - cor(MEs_SBS)
+ME_tree <- hclust(as.dist(ME_diss), method = "average")
+
+
+{plot(ME_tree, main = "Clustering of module eigengenes", xlab = "", sub = "")
+abline (h = merge_cut_height, col = "red")}
+merge_mod <- mergeCloseModules(input_mat, dynamic_colors, cutHeight = merge_cut_height, verbose = 3)
+merged_colors <- merge_mod$colors
+mergedMEs_sbs <- merge_mod$newMEs
+
+plotDendroAndColors(gene_tree, cbind(dynamic_colors, merged_colors),
+                    c("Dynamic Tree Cut", "Merged Dynamic"), 
+                    dendroLabels = FALSE, hang = 0.03,
+                    addGuide = TRUE, guideHang = 0.05)
+
+mergedMEs_sbs <- orderMEs(mergedMEs_sbs)
+```
+
+### DEGs and Fisher test
+We will save the genes with their modules and compare them with genes that have been identified through differential expression via a Fisher test to assess their significance. First we save both networks
+```{r save_genemod, message = FALSE}
+# Save genes with their modules
+red_df_auto <- data.frame (
+  gene_id = colnames (input_mat),
+  colors = module_colors
+)
+red_df_sbs <- data.frame (
+  gene_id = colnames (input_mat),
+  colors = merged_colors
+)
+
+save_df (red_df_auto, "gene_modules_auto")
+save_df (red_df_sbs, "gene_modules_step_by_step")
+```
+
+Now, let's test
+```{r DEGs, message = FALSE, warning = FALSE}
+data_DEGs <- read_delim (DEG_data)
+colnames(data_DEGs)[1] <- "gene_name"
+data_DEGs[DEG_columns] <- abs(data_DEGs[DEG_columns])
+data_DEGs <- data_DEGs %>% mutate (DE_count = apply (.[DEG_columns], 1, sum))
+data_DEGs <- filter (data_DEGs, data_DEGs$DE_count > 0)
+
+# Fisher test for every module
+fisher_test_mod_DEGs <- function(gene_mod_df,
+                                DEGs = data_DEGs,
+                                method) {
+  # Create module count table
+  modules_count <- gene_mod_df %>%
+    group_by(colors) %>%
+    summarize("n_genes" = n(),
+              "n_DEGs" = sum(gene_id %in% DEGs$gene_name),
+              .groups = "drop") %>%
+    mutate("n_no_DEGs" = n_genes - n_DEGs)
+  fisher_result <- data.frame() # empty dataframe to store results
+  for (i in 1:nrow(modules_count)) { # loop here to get all modules
+    module <- modules_count[i, ] 
+
+    n_DEGs <- module$n_DEGs
+    n_no_DEGs <- module$n_no_DEGs
+    n_DEGs_in_red <- sum (modules_count$n_DEGs) - n_DEGs
+    n_not_DEGs_not_red <- sum (modules_count$n_genes) - n_no_DEGs - n_DEGs_in_red - n_DEGs
+
+    contingency_mat <- matrix (c(n_DEGs, n_no_DEGs,
+                               n_DEGs_in_red, n_not_DEGs_not_red),
+                               nrow = 2, byrow = TRUE)
+    fisher_test <- fisher.test (contingency_mat,
+                                alternative = "greater")
+    # print (fisher_test)
+    result_df <- data.frame (colors = module$colors,
+                            n_genes = module$n_genes,
+                            n_DEGs = n_DEGs,
+                            "F-fisher" = fisher_test$estimate,
+                            "P-value" = fisher_test$p.value,
+                            "Significance" = ifelse(fisher_test$p.value < 0.05, "+", "-"),
+                            "DEGs_percentage" = n_DEGs / (module$n_genes) * 100)
+
+    fisher_result <- rbind(fisher_result, result_df)
+  }
+
+  # Save results
+  save_df (data_to_save = fisher_result,
+           data_name = paste0 ("fisher_result_greater_", method))
+  return (fisher_result)
+}
+
+# Use the function for both methods
+fisher_result_auto <- fisher_test_mod_DEGs (gene_mod_df = red_df_auto,
+                                            method = "auto")
+datatable (fisher_result_auto)
+fisher_result_sbs <- fisher_test_mod_DEGs (gene_mod_df = red_df_sbs,
+                                           method = "step_by_step")
+datatable (fisher_result_sbs)
+```
+
+
+Now we compare both methods and see which one yields **more significant modules** compared to the total. First, we calculate the proportion of significant modules with at least 1 DEG for both methods. Then, with a conditional statement, the most suitable one will be chosen, and the variables will be adjusted accordingly.
+
+```{r method_pick}
+# Check significant modules percentage
+prop_auto <- sum(fisher_result_auto$Significance == "+" & fisher_result_auto$n_DEGs > 0) / sum(fisher_result_auto$n_DEGs > 0) 
+prop_sbs <- sum(fisher_result_sbs$Significance == "+" & fisher_result_sbs$n_DEGs > 0) / sum(fisher_result_sbs$n_DEGs > 0)
+if (prop_auto > prop_sbs) {
+  # module_colors <- module_colors This one stays the same
+  gene_tree <- red$dendrograms[[1]]
+  mergedMEs <- mergedMEs_auto
+  sig_modules <- subset (fisher_result_auto, Significance == "+" & n_DEGs > 0)
+  sig_genes_df <- merge (red_df_auto, sig_modules, by = "colors") %>% 
+    .[,1:2]
+  save_df (sig_genes_df, "gene_significant_modules_auto")
+  message ("We proceed with the analysis using the results from the automatic method as it identifies more significant modules")
+  # we can subset significant modules
+} else if (prop_auto < prop_sbs) {
+  module_colors <- merged_colors
+  # gene_tree <- gene_tree This one stays the same
+  mergedMEs <- mergedMEs_sbs
+  sig_modules <- subset (fisher_result_sbs, Significance == "+" & n_DEGs > 0)
+  sig_genes_df <- merge (red_df_sbs, sig_modules, by = "colors") %>% 
+    .[,1:2]
+  save_df (sig_genes_df, "gene_significant_modules_sbs")
+  message ("We proceed with the analysis using the results from the step by step method as it identifies more significant modules")
+} else {
+  message ("Both methods seem to identify the same number of significant modules, please choose manually")
+}
+```
+
+### Some informative plots {.tabset .tabset-fade .tabset-pills}
+Here, results will be visualized in various ways to better understand the generated modules and their interrelationships
+
+#### Module-sample relationships
+This graph will display the modules across samples one by one, allowing us to explore temporal patterns among the modules, given the time-course nature of our data
+```{r chunk module-sample_auto}
+module_order <- names(mergedMEs) %>% gsub("ME","", .)
+mergedMEs$samples <- row.names(mergedMEs)
+
+plotMEs <- mergedMEs %>%
+  pivot_longer(-samples) %>%
+  mutate(
+    name = gsub("ME", "", name),
+    name = factor(name, levels = module_order) 
+  )
+
+plotMEs %>% ggplot(., aes(x=samples, y=name, fill=value)) +
+  geom_tile() +
+  geom_text(aes(label = round (value,2)), color = "black", size = 2) +
+  theme_bw() + 
+  scale_fill_gradient2(
+    low = "blue", 
+    high = "red", 
+    mid = "white", 
+    midpoint = 0, 
+    limit = c(-1,1)) +
+  theme(axis.text.x = element_text(angle=90)) +
+  labs(title = "Module-sample relationships", y = "Modules", fill="corr")
+```
+
+
+We can also focus on a single module across all samples
+```{r eigensamples}
+mergedMEs$groups <- gsub ("_.", "", rownames (mergedMEs))
+eigenmodplot <- ggplot (mergedMEs) + 
+  geom_bar (mapping = aes (x = rownames (mergedMEs), y = MEblue,
+                           color = groups, fill = groups),
+            stat = "identity") +
+  theme_bw() +
+  theme (axis.text.x = element_blank()) +
+  labs (x = " ", y = " blue eigengene") # From https://peerj.com/articles/15093/?utm_source=summary_email_publication&utm_medium=email&utm_campaign=connection#p-7
+print (eigenmodplot)
+
+# Or you can plot it this way:
+module <- "blue"
+ME <- mergedMEs[, paste ("ME", module, sep = "")]
+par (mfrow=c (2,1), mar = c (0.3, 5.5, 3, 2))
+plotMat (t (scale (input_mat[,module_colors == module ])),
+         nrgcols = 30,rlabels = F,rcols = module,
+         main =module, cex.main = 2)
+par (mar = c (5, 4.2, 0, 0.7))
+barplot (ME, col = module, main = "", cex.main = 2,
+         ylab = "eigengene expression",xlab = "array sample")
+```
+
+```{r hmap, echo = FALSE, results = "asis", eval = plot_heatmap} 
+if (plot_heatmap) {
+  cat("#### Heatmap of the entire network\n\n")
+  cat("Here, we will generate a heatmap of our dissimilarity matrix to further distinguish relationships between modules\n\n")
+  cat("This step is quite slow and not particularly informative. Sometimes it might be worthwhile to reduce the number of genes or even skip its execution. The logical variable plot_heatmap is defined to choose whether to plot it or not.\n\n")
+}
+```
+
+```{r chunk hmapplot, eval = plot_heatmap, echo = plot_heatmap}
+dissTOM_hm <- 1 - TOMsimilarityFromExpr(input_mat, power = picked_power)
+power_diss <- 10 # The higher this number, the more significant the differences will be
+plotTOM <- dissTOM_hm^power_diss 
+diag(plotTOM) <- NA
+# Careful here, too many genes will strongly slow this step
+TOMplot(plotTOM, gene_tree, module_colors, main = "Network heatmap plot, all genes", col = colorpanel(250, "red", "orange", "lemonchiffon"))
+```
+
+#### Eigengene dendrogram
+Here, we focus on the eigengenes. In this case, a dendrogram allows us to clearly visualize the relationships between modules generated after hierarchical clustering
+
+```{r dendroheat}
+# Recalculate eigengenes (same as the tutorial)
+MEs <- moduleEigengenes (input_mat, module_colors)$eigengenes
+MEs <- orderMEs (MEs)
+plotEigengeneNetworks (MEs, 
+                      "Eigengene Dendrogram", 
+                      marDendro = c (0,4,2,0),
+                      plotHeatmaps = FALSE)
+```
+
+#### Eigengene heatmap
+This is another way of representing the same as the dendrogram, but it is easier to understand
+```{r eigenhmap}
+plotEigengeneNetworks (MEs,
+                       "Eigengene adjacency heatmap",
+                       marHeatmap = c (3,4,2,2),
+                       plotDendrograms = FALSE,
+                       xLabelsAngle = 90)
+
+```
+
+#### Module-trait relationships
+In this section, we plot the results of correlating our trait data with the modules. It utilizes informative elements such as module membership value or gene significance, providing numerical data for extracting biological insights
+
+```{r module_trait}
+module_trait_cor <- cor (MEs, datTraits, use = "p")
+module_trait_pvalue <- corPvalueStudent (module_trait_cor, nrow (input_mat))
+
+text_matrix = paste(signif(module_trait_cor, 2), "\n(",
+                   signif(module_trait_pvalue, 1), ")", sep = "");
+dim(text_matrix) = dim(module_trait_cor)
+# heatmap
+par(mar = c(6, 8.5, 3, 3))
+# we also define a quantitative measure of module membership MM as the correlation of the module eigengene and the gene expression profile. Es decir: la correlación entre el ME y el perfil de expresión del gen (cuánto se parece al perfil de expresión de su módulo)
+labeledHeatmap(Matrix = module_trait_cor,
+               xLabels = names(datTraits),
+               xlab = "Pollen germination stages",
+               yLabels = names(MEs),
+               ySymbols = gsub("ME", "", names(MEs)),
+               colorLabels = FALSE,
+               colors = blueWhiteRed (50),
+               textMatrix = text_matrix,
+               setStdMargins = FALSE,
+               cex.text = 0.5,
+               zlim = c(-1,1),
+               main = paste("Module-trait relationships"))
+```
+
+Let's focus on only a few interesting modules
+```{r module_trait_specific}
+# choose a trait to calculate gene significance. Check module-trait plot to decide
+PG1H <- as.data.frame(datTraits$PG1H)
+names (PG1H) <- PG1H
+mod_names <- substring (names (MEs), 3)
+# calculate module membership
+gene_mod_membership <- as.data.frame (cor (input_mat, MEs, use = "p"))
+MMPvalue <- as.data.frame (corPvalueStudent (as.matrix (gene_mod_membership),
+                                             nrow (input_mat)))
+# calculate gene significance
+names (gene_mod_membership) <- paste ("MM", mod_names, sep="")
+names (MMPvalue) <- paste ("p.MM", mod_names, sep="")
+gene_trait_significance <- as.data.frame (cor (input_mat,
+                                               PG1H, 
+                                               use = "p"))
+#Gene significance (GS) was defined as the correlation between gene expression and each trait.
+GSPvalue <- as.data.frame (corPvalueStudent (as.matrix (gene_trait_significance),
+                                            nrow (input_mat)))
+names (gene_trait_significance) <- paste ("GS.", names (PG1H), sep="")
+names (GSPvalue) <- paste ("p.GS.", names (PG1H), sep="")
+
+# choose a module of interest
+module <- "brown"
+column <- match (module, mod_names)
+module_genes <- module_colors == module
+
+verboseScatterplot (abs (gene_mod_membership[module_genes, column]),
+                    abs (gene_trait_significance[module_genes,1]),
+                    xlab = paste ("Module membership in", module, "module"),
+                    ylab = "Gene significance for 6 hours",
+                    main = paste ("Module membership vs. gene significance\n"),
+                  cex.main = 1.2, cex.lab = 1.2, cex.axis = 1.2, col = module)
+```
+
+### Connectivity
+Studying connectivity and relating it to previously obtained values such as module membership, we can gather additional information of interest, such as identifying hub genes (highly connected genes
+```{r connectivity}
+# The function intramodularConnectivity computes the whole network connectivity kTotal, the within module connectivity kWithin, kOut=kTotal-kWithin, and kDiff=kIn-kOut=2*kIN-kTotal
+gene_k <- intramodularConnectivity.fromExpr(input_mat, module_colors, power = picked_power)
+row.names(gene_k) <- colnames(input_mat)
+gene_k$modulo <- module_colors[match(rownames(gene_k), colnames(input_mat))]
+top_hubs <- chooseTopHubInEachModule (input_mat, module_colors, picked_power, type = "signed", omitColors = "grey")
+hubs_k <- gene_k[rownames(gene_k) %in% top_hubs, ]
+datatable(hubs_k)
+
+# Hubs will be found here
+filtered_genes <- abs (gene_trait_significance) > 0.8 &
+  abs (gene_mod_membership$MMmagenta) > 0.8 &
+  red_df_auto$colors == module
+table (filtered_genes) # how many are there?
+selected_genes <- dimnames (data.frame (input_mat))[[2]][filtered_genes] # which ones?
+selected_genes_df <- data.frame (gene_id = selected_genes,
+                                 connectivity = gene_k$kWithin[filtered_genes],
+                                 mod_membership = gene_mod_membership$MMblue[filtered_genes],
+                                 gene_significance = gene_trait_significance[filtered_genes,1])
+# Turn into data frame and save
+selected_genes_df <- arrange (selected_genes_df, desc (connectivity))
+head (selected_genes_df)
+save_df (selected_genes_df, paste0 ("hub_genes_", module, "_module"))
+
+# You can also try:
+#target_gene <- data.frame (gene_trait_significance[,1], gene_mod_membership$MMblue)
+#rownames(target_gene) <- rownames(gene_trait_significance)
+# Valores a elegir
+#hub_gene <- target_gene[abs(target_gene[1]) > 0.85 & abs(target_gene[2]) > 0.85,]
+#target_exp <- input_mat[,colnames(input_mat) %in% rownames(target_gene)]
+#hub_exp <- input_mat[,colnames(input_mat) %in% rownames(hub_gene)]
+#hub_cor <- cor (hub_exp)
+#library (c(corrplot, paletteer))
+#my_color = rev(paletteer_d("RColorBrewer::RdYlBu"))
+#my_color = colorRampPalette(my_color)(10)
+#M = cor(hub_exp)
+#testRes = cor.mtest(hub_exp, conf.level = 0.95)
+#corrplot (M, order = "AOE", method = "square", type "upper", tl.pos = "d", p.mat = testRes$p, insig = "label_sig", pch.cex = .9, tl.col = "black", col = my_color)
+```
+
+### Exporting the network
+Here, we will export both the overall network for the selected modules of interest and the one containing only the Differentially Expressed Genes (DEGs).
+```{r netwkexport, eval = FALSE}
+# Recalculate TOM with TOMSimilarityFromExpr
+TOM_expr <- TOMsimilarityFromExpr (input_mat, power = picked_power)
+
+# Pick modules of interest
+modules_of_interest <- c("yellow", "blue") 
+
+probes <- names (as.data.frame (input_mat))
+in_module <- is.finite (match (module_colors, modules_of_interest)) 
+mod_probes <- probes[in_module]
+mod_TOM <- TOM_expr[in_module, in_module]
+dimnames(mod_TOM) <- list(mod_probes, mod_probes)
+
+# Export to cytoscpae
+cyt <- exportNetworkToCytoscape (mod_TOM,
+                                 edgeFile = paste (results_path,
+                                                   "CytoscapeInput-edges-",
+                                                   paste (modules_of_interest,
+                                                          collapse = "-"),
+                                                   ".txt",
+                                                   sep = ""),
+                                 nodeFile = paste (results_path,
+                                                   "CytoscapeInput-nodes-",
+                                                   paste (modules_of_interest,
+                                                          collapse = "-"),
+                                                   ".txt",
+                                                   sep = ""),
+                                 weighted = TRUE,
+                                 threshold = 0.02,
+                                 nodeNames = mod_probes,
+                                 nodeAttr = module_colors[in_module])
+
+head (cyt$edgeData, 3)
+head (cyt$nodeData, 3)
+```
