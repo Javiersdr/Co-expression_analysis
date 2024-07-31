@@ -64,29 +64,22 @@ This document shows a workflow to analyse RNA-seq data with **WGCNA** and **Mfuz
 library (WGCNA)
 library (tidyverse)
 library (limma)
-library (Mfuzz)
+#library (Mfuzz)
 library (gplots)
 library (DT)
 ```
 
 ```{r variables, include = FALSE}
 # Customizable variables are here
-initial_data <- "~/R/Olivos/CTFnormalisedCPMs-2023-01-02_14.59.24.tsv"
-trait_data <- "~/R/Analisis_Coexpresion/trait_data.tsv"
-results_path <- "~/R/Analisis_Coexpresion/results_CoEx/"
-current_date <- format (Sys.time (), "%F_%H.%M.%S")
-results_path <- paste0 (results_path, current_date, "/")
-dir.create (results_path)
+initial_data <- paste0(DATA_DIR, INITIAL_FILE)
+trait_data <- paste0(DATA_DIR, TRAIT_FILE)
 # These belong to WGCNA
 Do_WGCNA <- TRUE
 plot_heatmap <- FALSE
-min_module_size <- 30
-merge_cut_height <- 0.25
-power_diss <- 10
-DEG_data <- "~/R/Olivos/AllGenes_TREAT_allContrast_P-0.1_FC-1.2_2022-07-28_13.10.30.tsv"
+DEG_data <- paste0(DATA_DIR, DEG_FILE)
 DEG_columns <- 27:32
 # These belong to Mfuzz
-Do_Mfuzz <- TRUE
+Do_Mfuzz <- FALSE
 eset_thres <- 0.25
 n_clusters <- 8
 time_labels <- c (0,1,3,6)
@@ -137,8 +130,11 @@ data_matrix <- as.matrix(data[,-1])
 row.names(data_matrix) = data$GeneID
 
 # Keep 0.25
-q75 <- quantile (data_matrix, 0.75)
-expr_mat <- data_matrix[rowSums (data_matrix > q75) == ncol(data_matrix), ]
+#q75 <- quantile (data_matrix, 0.75)
+#data_matrix <- data_matrix[rowSums (data_matrix > q75) == ncol(data_matrix), ]
+mean_expression <- rowMeans(data_matrix)
+mean_threshold <- quantile(mean_expression, 0.5)
+data_matrix <- data_matrix[mean_expression > mean_threshold, ]
 ```
 
 # Co-expression analysis
@@ -169,6 +165,7 @@ The script was executed in the following computer:
 ```{r tiempo_total, results='hold', echo=FALSE}
 Tff <- proc.time() # final time
 T_total <- Tff - T00
+T_total
 ```
 
 Elapsed time: **`r round(T_total[[3]]/60, digits = 2)` min**.
