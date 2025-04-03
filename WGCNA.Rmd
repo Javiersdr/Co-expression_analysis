@@ -19,16 +19,27 @@ Now it's time to choose the most suitable power ( $\beta$ ) to which we will rai
 powers = c(c(1:10), seq (from = 12, to = 30, by = 2))
 power_soft <- pickSoftThreshold(input_mat,
                          powerVector = powers,
+                         blockSize = max_block_size,
                          networkType = "signed",
                          verbose = 5)
 
 # We use this formula to try to find the best power because the model couldn't get to 0.8
-#power_cutoff = 0.8
-power_cutoff = power_soft$fitIndices$SFT.R.sq[20] * 0.9
+# Define the two cutoffs
+power_cutoff_flat <- 0.8
+power_cutoff_calc <- power_soft$fitIndices$SFT.R.sq[nrow(power_soft$fitIndices)] * 0.9
+
+# Determine which cutoff to use
+relevant_rows <- power_soft$fitIndices$SFT.R.sq >= power_cutoff_flat
+if (any(relevant_rows) && any((power_soft$fitIndices$slope[relevant_rows] < 0))) {
+  power_cutoff <- power_cutoff_flat
+} else {
+  power_cutoff <- power_cutoff_calc
+}
+
+# Select the appropriate power
 
 par(mfrow = c(1,2));
 cex1 = 0.9;
-
 plot(power_soft$fitIndices[, 1],
      -sign(power_soft$fitIndices[, 3]) * power_soft$fitIndices[, 2],
      xlab = "Soft Threshold (power)", 
@@ -53,11 +64,16 @@ text(power_soft$fitIndices[, 1],
      labels = powers, 
      cex = cex1, col = "red")
 
-# This will be the power for the adjacency matrix
+# picked_power <- power_soft$fitIndices %>% 
+#   filter((-sign(slope) * SFT.R.sq) > power_cutoff) %>% 
+#   arrange(Power) %>%
+#   slice(1) %>%
+#   pull(Power)
 picked_power = power_soft$fitIndices %>% 
   filter ((-sign(slope) * SFT.R.sq) > power_cutoff) %>% 
   arrange () %>% 
   .[1,1]
+print(picked_power)
 ```
 
 ### Building the network
@@ -77,7 +93,7 @@ red <- blockwiseModules(input_mat,
                           power = picked_power,                
                           networkType = "signed",
                           TOMtype = "signed", # * explained
-                          deepSplit = 2, #  0 to 4, to make it more sensitive and get more modules
+                          deepSplit = 1, #  0 to 4, to make it more sensitive and get more modules
                           pamRespectsDendro = F,
                           minModuleSize = min_module_size,
                           maxBlockSize = max_block_size,
@@ -183,9 +199,9 @@ mergedMEs <- mergedMEs_auto
 ```
 
 Now, let's test
-```{r DEGs, message = FALSE, warning = FALSE, eval = FALSE, echo = FALSE}
-data_DEGs <- read_delim (DEG_data)
-colnames(data_DEGs)[1] <- "gene_name"
+```{r DEGs, message = FALSE, warning = FALSE, eval = DO_DEGS, echo = DO_DEGS}
+data_DEGs <- read.table (DEG_data, header = TRUE, sep = "\t", row.names = 1)
+DEG_columns <- grep("Results.*", colnames(data_DEGs))
 data_DEGs[DEG_columns] <- abs(data_DEGs[DEG_columns])
 data_DEGs <- data_DEGs %>% mutate (DE_count = apply (.[DEG_columns], 1, sum))
 data_DEGs <- filter (data_DEGs, data_DEGs$DE_count > 0)
@@ -198,7 +214,7 @@ fisher_test_mod_DEGs <- function(gene_mod_df,
   modules_count <- gene_mod_df %>%
     group_by(colors) %>%
     summarize("n_genes" = n(),
-              "n_DEGs" = sum(gene_id %in% DEGs$gene_name),
+              "n_DEGs" = sum(gene_id %in% rownames(data_DEGs)),
               .groups = "drop") %>%
     mutate("n_no_DEGs" = n_genes - n_DEGs)
   fisher_result <- data.frame() # empty dataframe to store results
@@ -238,7 +254,7 @@ fisher_result_auto <- fisher_test_mod_DEGs (gene_mod_df = red_df_auto,
                                             method = "auto")
 datatable (fisher_result_auto)
 #fisher_result_sbs <- fisher_test_mod_DEGs (gene_mod_df = red_df_sbs,
-                                           method = "step_by_step")
+                                           #method = "step_by_step")
 #datatable (fisher_result_sbs)
 ```
 
@@ -276,9 +292,47 @@ if (prop_auto > prop_sbs) {
 ### Some informative plots {.tabset .tabset-fade .tabset-pills}
 Here, results will be visualized in various ways to better understand the generated modules and their interrelationships
 
+#### Module-trait relationships
+In this section, we plot the results of correlating our trait data with the modules. It utilizes informative elements such as module membership value or gene significance, providing numerical data for extracting biological insights
+
+```{r module_trait, fig.width = 8, fig.height = 8, fig.align='center', eval=TRUE}
+
+MEs <- moduleEigengenes (input_mat, module_colors)$eigengenes
+MEs <- orderMEs (MEs)
+
+module_trait_cor <- cor (MEs, datTraits, use = "p")
+module_trait_pvalue <- corPvalueStudent (module_trait_cor, nrow (input_mat))
+text_matrix = paste(signif(module_trait_cor, 2), "\n(",
+                   signif(module_trait_pvalue, 1), ")", sep = "");
+dim(text_matrix) = dim(module_trait_cor)
+# heatmap
+par(mar = c(9, 8.5, 8.5, 4))
+# we also define a quantitative measure of module membership MM as the correlation of the module eigengene and the gene expression profile. Es decir: la correlación entre el ME y el perfil de expresión del gen (cuánto se parece al perfil de expresión de su módulo)
+labeledHeatmap(Matrix = module_trait_cor,
+               xLabels = names(datTraits),
+               yLabels = names(MEs),
+               ySymbols = gsub("ME", "", names(MEs)),
+               colorLabels = FALSE,
+               colors = blueWhiteRed (50),
+               textMatrix = text_matrix,
+               setStdMargins = FALSE,
+               cex.text = 0.5,
+               cex.lab.y = 0.5,
+               zlim = c(-1,1),
+               main = paste("Module-trait relationships"))
+
+# Now we can save the relevant modules data frame as well
+low_pval <- apply(module_trait_pvalue, 1,
+                  function(x)(any(x < 0.05)))
+low_pval <- low_pval[low_pval == TRUE]
+low_pval_mods <- gsub("ME", "", names(low_pval))
+low_pval_df <- red_df_auto[red_df_auto$colors %in% low_pval_mods,]
+save_df (low_pval_df, "gene_modules_significant_cor")
+```
+
 #### Module-sample relationships
 This graph will display the modules across samples one by one, allowing us to explore temporal patterns among the modules, given the time-course nature of our data
-```{r chunk module-sample_auto}
+```{r chunk module-sample_auto, eval=FALSE, echo=FALSE}
 module_order <- names(mergedMEs) %>% gsub("ME","", .)
 mergedMEs$samples <- row.names(mergedMEs)
 
@@ -303,31 +357,6 @@ plotMEs %>% ggplot(., aes(x=samples, y=name, fill=value)) +
   labs(title = "Module-sample relationships", y = "Modules", fill="corr")
 ```
 
-
-We can also focus on a single module across all samples
-```{r eigensamples}
-mergedMEs$groups <- gsub ("_.", "", rownames (mergedMEs))
-eigenmodplot <- ggplot (mergedMEs) + 
-  geom_bar (mapping = aes (x = rownames (mergedMEs), y = MEblue,
-                           color = groups, fill = groups),
-            stat = "identity") +
-  theme_bw() +
-  theme (axis.text.x = element_blank()) +
-  labs (x = " ", y = " blue eigengene") # From https://peerj.com/articles/15093/?utm_source=summary_email_publication&utm_medium=email&utm_campaign=connection#p-7
-print (eigenmodplot)
-
-# Or you can plot it this way:
-module <- "blue"
-ME <- mergedMEs[, paste ("ME", module, sep = "")]
-par (mfrow=c (2,1), mar = c (0.3, 5.5, 3, 2))
-plotMat (t (scale (input_mat[,module_colors == module ])),
-         nrgcols = 30,rlabels = F,rcols = module,
-         main =module, cex.main = 2)
-par (mar = c (5, 4.2, 0, 0.7))
-barplot (ME, col = module, main = "", cex.main = 2,
-         ylab = "eigengene expression",xlab = "array sample")
-```
-
 ```{r hmap, echo = FALSE, results = "asis", eval = plot_heatmap} 
 if (plot_heatmap) {
   cat("#### Heatmap of the entire network\n\n")
@@ -348,10 +377,8 @@ TOMplot(plotTOM, gene_tree, module_colors, main = "Network heatmap plot, all gen
 #### Eigengene dendrogram
 Here, we focus on the eigengenes. In this case, a dendrogram allows us to clearly visualize the relationships between modules generated after hierarchical clustering
 
-```{r dendroheat}
+```{r dendroheat, eval = FALSE, echo = FALSE}
 # Recalculate eigengenes (same as the tutorial)
-MEs <- moduleEigengenes (input_mat, module_colors)$eigengenes
-MEs <- orderMEs (MEs)
 plotEigengeneNetworks (MEs, 
                       "Eigengene Dendrogram", 
                       marDendro = c (0,4,2,0),
@@ -360,7 +387,7 @@ plotEigengeneNetworks (MEs,
 
 #### Eigengene heatmap
 This is another way of representing the same as the dendrogram, but it is easier to understand
-```{r eigenhmap}
+```{r eigenhmap, eval = FALSE, echo = FALSE}
 plotEigengeneNetworks (MEs,
                        "Eigengene adjacency heatmap",
                        marHeatmap = c (3,4,2,2),
@@ -369,86 +396,47 @@ plotEigengeneNetworks (MEs,
 
 ```
 
-#### Module-trait relationships
-In this section, we plot the results of correlating our trait data with the modules. It utilizes informative elements such as module membership value or gene significance, providing numerical data for extracting biological insights
-
-```{r module_trait, fig.width=8, fig.height=6, fig.align='center'}
-module_trait_cor <- cor (MEs, datTraits, use = "p")
-module_trait_pvalue <- corPvalueStudent (module_trait_cor, nrow (input_mat))
-
-text_matrix = paste(signif(module_trait_cor, 2), "\n(",
-                   signif(module_trait_pvalue, 1), ")", sep = "");
-dim(text_matrix) = dim(module_trait_cor)
-# heatmap
-#par(mar = c(9, 8.5, 8.5, 4))
-# we also define a quantitative measure of module membership MM as the correlation of the module eigengene and the gene expression profile. Es decir: la correlación entre el ME y el perfil de expresión del gen (cuánto se parece al perfil de expresión de su módulo)
-labeledHeatmap(Matrix = module_trait_cor,
-               xLabels = names(datTraits),
-               xlab = "Pollen germination stages",
-               yLabels = names(MEs),
-               ySymbols = gsub("ME", "", names(MEs)),
-               colorLabels = FALSE,
-               colors = blueWhiteRed (50),
-               textMatrix = text_matrix,
-               setStdMargins = FALSE,
-               cex.text = 0.5,
-               cex.lab.y = 0.5,
-               zlim = c(-1,1),
-               main = paste("Module-trait relationships"))
-pdf(paste0(results_path, "_module_trait.pdf"), width = 450, height = 800)
-labeledHeatmap(Matrix = module_trait_cor,
-               xLabels = names(datTraits),
-               xlab = "Pollen germination stages",
-               yLabels = names(MEs),
-               ySymbols = gsub("ME", "", names(MEs)),
-               colorLabels = FALSE,
-               colors = blueWhiteRed (50),
-               textMatrix = text_matrix,
-               setStdMargins = FALSE,
-               cex.text = 0.5,
-               zlim = c(-1,1),
-               main = paste("Module-trait relationships"))
-dev.off()
-```
-
-Let's focus on only a few interesting modules
-```{r module_trait_specific, eval = FALSE, echo = FALSE}
-# choose a trait to calculate gene significance. Check module-trait plot to decide
-PG1H <- as.data.frame(datTraits$PG1H)
-names (PG1H) <- PG1H
-mod_names <- substring (names (MEs), 3)
-# calculate module membership
+```{r module_trait_specific, eval = TRUE, echo = FALSE}
 gene_mod_membership <- as.data.frame (cor (input_mat, MEs, use = "p"))
 MMPvalue <- as.data.frame (corPvalueStudent (as.matrix (gene_mod_membership),
                                              nrow (input_mat)))
-# calculate gene significance
+mod_names <- substring (names (MEs), 3)
 names (gene_mod_membership) <- paste ("MM", mod_names, sep="")
 names (MMPvalue) <- paste ("p.MM", mod_names, sep="")
-gene_trait_significance <- as.data.frame (cor (input_mat,
-                                               PG1H, 
+
+gene_trait_significance_list <- list()
+GSPvalue_list <- list()
+for (trait in colnames(datTraits)) {
+  current_trait <- as.data.frame(datTraits[[trait]])
+  names (current_trait) <- trait
+  gene_trait_significance <- as.data.frame (cor (input_mat,
+                                               current_trait, 
                                                use = "p"))
 #Gene significance (GS) was defined as the correlation between gene expression and each trait.
-GSPvalue <- as.data.frame (corPvalueStudent (as.matrix (gene_trait_significance),
-                                            nrow (input_mat)))
-names (gene_trait_significance) <- paste ("GS.", names (PG1H), sep="")
-names (GSPvalue) <- paste ("p.GS.", names (PG1H), sep="")
+  GSPvalue <- as.data.frame(corPvalueStudent(as.matrix(gene_trait_significance), nrow (input_mat)))
+  names (gene_trait_significance) <- paste ("GS.", names (current_trait), sep="")
+  names (GSPvalue) <- paste ("p.GS.", names (current_trait), sep="")
+  gene_trait_significance_list[[trait]] <- gene_trait_significance
+  GSPvalue_list[[trait]] <- GSPvalue
+}
+all_gene_trait_significance <- do.call(cbind, gene_trait_significance_list)
+all_GSPvalue <- do.call(cbind, GSPvalue_list)
+# choose a module of interest if you want to scatterplot it
+#module <- "brown"
+#column <- match (module, mod_names)
+#module_genes <- module_colors == module
 
-# choose a module of interest
-module <- "brown"
-column <- match (module, mod_names)
-module_genes <- module_colors == module
-
-verboseScatterplot (abs (gene_mod_membership[module_genes, column]),
-                    abs (gene_trait_significance[module_genes,1]),
-                    xlab = paste ("Module membership in", module, "module"),
-                    ylab = "Gene significance for 6 hours",
-                    main = paste ("Module membership vs. gene significance\n"),
-                  cex.main = 1.2, cex.lab = 1.2, cex.axis = 1.2, col = module)
+#verboseScatterplot (abs (gene_mod_membership[module_genes, column]),
+#                    abs (gene_trait_significance[module_genes,1]),
+ #                   xlab = paste ("Module membership in", module, "module"),
+ #                   ylab = "Gene significance for 6 hours",
+ #                   main = paste ("Module membership vs. gene significance\n"),
+       #           cex.main = 1.2, cex.lab = 1.2, cex.axis = 1.2, col = module)
 ```
 
 ### Connectivity
-Studying connectivity and relating it to previously obtained values such as module membership, we can gather additional information of interest, such as identifying hub genes (highly connected genes
-```{r connectivity, eval = FALSE, echo = FALSE}
+Studying connectivity and relating it to previously obtained values such as module membership, we can gather additional information of interest, such as identifying hub genes (highly connected genes)
+```{r connectivity, eval = TRUE, echo = TRUE}
 # The function intramodularConnectivity computes the whole network connectivity kTotal, the within module connectivity kWithin, kOut=kTotal-kWithin, and kDiff=kIn-kOut=2*kIN-kTotal
 gene_k <- intramodularConnectivity.fromExpr(input_mat, module_colors, power = picked_power)
 row.names(gene_k) <- colnames(input_mat)
@@ -458,20 +446,36 @@ hubs_k <- gene_k[rownames(gene_k) %in% top_hubs, ]
 datatable(hubs_k)
 
 # Hubs will be found here
-filtered_genes <- abs (gene_trait_significance) > 0.8 &
-  abs (gene_mod_membership$MMmagenta) > 0.8 &
-  red_df_auto$colors == module
-table (filtered_genes) # how many are there?
-selected_genes <- dimnames (data.frame (input_mat))[[2]][filtered_genes] # which ones?
-selected_genes_df <- data.frame (gene_id = selected_genes,
-                                 connectivity = gene_k$kWithin[filtered_genes],
-                                 mod_membership = gene_mod_membership$MMblue[filtered_genes],
-                                 gene_significance = gene_trait_significance[filtered_genes,1])
+unique_modules <- unique(module_colors[module_colors!="grey"])
+selected_genes_list <- list()
+for (module in unique_modules) {
+  module_genes <- module_colors == module
+  for (trait in colnames(all_gene_trait_significance)) {
+    filtered_genes <- abs (all_gene_trait_significance[[trait]]) > 0.8 &
+    abs (gene_mod_membership[[paste0("MM", module)]]) > 0.8 &
+    module_colors == module
+    selected_genes <- dimnames (data.frame (input_mat))[[2]][filtered_genes]
+    if (length(selected_genes) > 0) {
+      module_folder <- paste0(results_path, module, "_hubs/")
+      if (!dir.exists(module_folder)) {
+        dir.create(module_folder)
+      }
+      selected_genes_df <- data.frame(
+        gene_id = selected_genes,
+        connectivity = gene_k$kWithin[filtered_genes],
+        mod_membership = gene_mod_membership[[paste0("MM", module)]][filtered_genes],
+        gene_significance = all_gene_trait_significance[filtered_genes, trait])
 # Turn into data frame and save
-selected_genes_df <- arrange (selected_genes_df, desc (connectivity))
-head (selected_genes_df)
-save_df (selected_genes_df, paste0 ("hub_genes_", module, "_module"))
-
+  selected_genes_df <- arrange (selected_genes_df, desc (connectivity))
+  selected_genes_list[[paste(module, trait, sep = "_")]] <- selected_genes_df
+  #print(paste("Module", module, " | trait:", trait))
+  save_df (selected_genes_df, paste0 ("hub_genes_", module, "_", trait, "_module"), path = module_folder)
+    } 
+    #else {
+      #print(paste("No genes found for module", module, "| trait", trait))
+    #}
+  }
+}
 # You can also try:
 #target_gene <- data.frame (gene_trait_significance[,1], gene_mod_membership$MMblue)
 #rownames(target_gene) <- rownames(gene_trait_significance)

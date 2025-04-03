@@ -49,20 +49,25 @@ SOURCE_DIR = "/data1/datos_javi/IHSM/Co-expression_analysis/"
 #   DATA_DIR = "~/Documents/My_MA_data/this_experiment/"
 # A final "/" in path is compulsory
 
-DATA_DIR = "/data1/datos_javi/IHSM/RSeqFlow/Picual-vs-Arbequina-polen-maduro/"
+DATA_DIR = "/data1/datos_javi/IHSM/Co-expression_analysis/example/"
 # //////////////////////////////////////
 
-INITIAL_FILE <- "CTFnormalisedCPMs-2024-05-13_01.02.57.tsv"
+INITIAL_FILE <- "CTFnormalisedCPMs-2024-11-26_09.36.30.tsv"
 TRAIT_FILE <- "trait_data.tsv"
-DEG_FILE <- "AllGenes_TREAT_allContrast_P-0.1_FC-1.2_2022-07-28_13.10.30.tsv"
-DEG_columns <- 27:32
+
+DO_DEGS <- FALSE
+DEG_FILE <- "AllGenes_allContrast_TREAT-P-0.05_FC-1.5_2024-05-13_01.02.57.tsv"
 
 # WGCNA
 threads = 16
 min_module_size <- 30
 merge_cut_height <- 0.25
 power_diss <- 10
+# Lower this number according to your RAM. However, 64 Gb should be okay for 30000 genes
 max_block_size <- 30000
+# fraction of genes you want to filter out
+# For example, 0.25 will eliminate 25% of genes with lower expression
+num_quantile <- 0.25
 
 # %%%%%%%%%%%%%%%%%%%%%%%%%%%
 # END CONFIGURATION FILE ####

@@ -1,6 +1,6 @@
 ---
-title: "Gene co-expression analysis"
-subtitle: "WGCNA and Mfuzz"
+title: "`r PROJECT_NAME`"
+subtitle: "Co-expression analysis"
 author: "Javier Santos"
 date: "`r format(Sys.time(), '%A %d, %B %Y. %X')`"
 output:
@@ -60,7 +60,7 @@ knit_hooks$set(
 This document shows a workflow to analyse RNA-seq data with **WGCNA** and **Mfuzz**, for co-expression network analyses. 
 
 # Configuration 
-```{r chunk 1, message = FALSE, warning = FALSE}
+```{r chunk libraries, message = FALSE, warning = FALSE}
 library (WGCNA)
 library (tidyverse)
 library (limma)
@@ -77,7 +77,6 @@ trait_data <- paste0(DATA_DIR, TRAIT_FILE)
 Do_WGCNA <- TRUE
 plot_heatmap <- FALSE
 DEG_data <- paste0(DATA_DIR, DEG_FILE)
-DEG_columns <- 27:32
 # These belong to Mfuzz
 Do_Mfuzz <- FALSE
 eset_thres <- 0.25
@@ -122,19 +121,27 @@ save_df <- function (data_to_save,
 Here we will take our data matrix and prepare it for the analysis. Specifically, we will "tidy" and keep q75. Since the data is already normalized, we may skip that step
 
 ```{r chunk data1, message = FALSE}
-data <- read_delim(initial_data)
+data <- read.table(initial_data, header = T, sep = "\t", row.names = 1)
 
 # We turn the data frame into a matrix
-names(data)[1] = "GeneID"
-data_matrix <- as.matrix(data[,-1])
-row.names(data_matrix) = data$GeneID
+#names(data)[1] = "GeneID"
+data_matrix <- as.matrix(data)
+#row.names(data_matrix) = data$GeneID
 
-# Keep 0.25
-#q75 <- quantile (data_matrix, 0.75)
-#data_matrix <- data_matrix[rowSums (data_matrix > q75) == ncol(data_matrix), ]
-mean_expression <- rowMeans(data_matrix)
-mean_threshold <- quantile(mean_expression, 0.5)
-data_matrix <- data_matrix[mean_expression > mean_threshold, ]
+# Keep the quantile_num genes
+gene_means <- rowMeans(data_matrix)
+cutoff <- quantile(gene_means, probs = num_quantile)
+data_matrix <- data_matrix[gene_means > cutoff, ]
+
+# mean filter
+#mean_expression <- rowMeans(data_matrix)
+#mean_threshold <- quantile(mean_expression, 0.5)
+#data_matrix <- data_matrix[mean_expression > mean_threshold, ]
+
+# variance filter
+#var_threshold <- 0.5
+#data_matrix <- data_matrix[apply(data_matrix, 1, var) > var_threshold, ]
+
 ```
 
 # Co-expression analysis
