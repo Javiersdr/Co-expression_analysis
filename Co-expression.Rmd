@@ -110,12 +110,13 @@ save_df <- function (data_to_save,
 |  DEG data | `r DEG_data`|
 | Minimum module size | `r min_module_size`|
 | Cutoff to merge modules | `r merge_cut_height`|
+| Expression threshold | `r num_thresh`|
 | Heatmap | `r plot_heatmap`|
 | Gene expression cutoff for Mfuzz |`r eset_thres`|
 | Number of clusters | `r n_clusters`|
 | Time labels | `r time_labels`|
 | Results path | `r results_path`|
-
+| Expression threshold | `r num_thresh`|
 
 # Preprocessing
 Here we will take our data matrix and prepare it for the analysis. Specifically, we will "tidy" and keep q75. Since the data is already normalized, we may skip that step
@@ -129,9 +130,10 @@ data_matrix <- as.matrix(data)
 #row.names(data_matrix) = data$GeneID
 
 # Keep the quantile_num genes
-gene_means <- rowMeans(data_matrix)
-cutoff <- quantile(gene_means, probs = num_quantile)
-data_matrix <- data_matrix[gene_means > cutoff, ]
+#gene_means <- rowMeans(data_matrix)
+#cutoff <- quantile(gene_means, probs = num_quantile)
+#data_matrix <- data_matrix[gene_means > cutoff, ]
+data_matrix <- data_matrix[rowSums(data_matrix >= num_thresh) > num_samples, ]
 
 # mean filter
 #mean_expression <- rowMeans(data_matrix)

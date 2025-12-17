@@ -2,13 +2,13 @@
 Now, a demonstration of the preparation and analysis of olive RNA-seq time-course data using **[WGCNA](https://horvath.genetics.ucla.edu/html/CoexpressionNetwork/Rpackages/WGCNA/#WGCNAIntro)** will be presented. WGCNA is a widely used R library for co-expression network analysis. They provide numerous tutorials on their official page to guide users on the best methodology for different types of data
 
 ### Preprocessing for WGCNA
-We prepare our matrix for WGCNA, where we need it to be such that rows -> samples and columns -> genes, so we transpose it. We also load our phenotypic data
+We prepare our matrix for WGCNA, where we need it to be such that rows -> samples and columns -> genes, so we transpose it. We also load our trait data.
 ```{r chunk dataWGCNA}
-enableWGCNAThreads(threads)
+enableWGCNAThreads(THREADS)
 # IT'S VERY IMPORTANT TO TRANSPOSE THE MATRIX
 input_mat <- t(data_matrix)
 # Load trait data here
-datTraits <- read.table (trait_data)
+datTraits <- read.table(trait_data)
 ```
 
 ### Power selection
@@ -93,15 +93,16 @@ red <- blockwiseModules(input_mat,
                           power = picked_power,                
                           networkType = "signed",
                           TOMtype = "signed", # * explained
-                          deepSplit = 1, #  0 to 4, to make it more sensitive and get more modules
+                          deepSplit = deepSplit, #  0 to 4, to make it more sensitive and get more modules
                           pamRespectsDendro = F,
                           minModuleSize = min_module_size,
                           maxBlockSize = max_block_size,
-                          reassignThreshold = 0, 
+                          minCoreKME = 0.65,
                           mergeCutHeight = merge_cut_height,
                           saveTOMs = FALSE,
                           numericLabels = TRUE,
-                          verbose = 3)
+                          verbose = 3,
+                          nThreads = n_clusters)
 
 cor <- temp_cor     # Return it to original cor
 ```
@@ -295,7 +296,7 @@ Here, results will be visualized in various ways to better understand the genera
 #### Module-trait relationships
 In this section, we plot the results of correlating our trait data with the modules. It utilizes informative elements such as module membership value or gene significance, providing numerical data for extracting biological insights
 
-```{r module_trait, fig.width = 8, fig.height = 8, fig.align='center', eval=TRUE}
+```{r module_trait, fig.width = 15, fig.height = 10, fig.align='center', eval=TRUE}
 
 MEs <- moduleEigengenes (input_mat, module_colors)$eigengenes
 MEs <- orderMEs (MEs)
@@ -306,7 +307,7 @@ text_matrix = paste(signif(module_trait_cor, 2), "\n(",
                    signif(module_trait_pvalue, 1), ")", sep = "");
 dim(text_matrix) = dim(module_trait_cor)
 # heatmap
-par(mar = c(9, 8.5, 8.5, 4))
+#par(mar = c(12, 10, 6, 6))
 # we also define a quantitative measure of module membership MM as the correlation of the module eigengene and the gene expression profile. Es decir: la correlación entre el ME y el perfil de expresión del gen (cuánto se parece al perfil de expresión de su módulo)
 labeledHeatmap(Matrix = module_trait_cor,
                xLabels = names(datTraits),
@@ -320,7 +321,6 @@ labeledHeatmap(Matrix = module_trait_cor,
                cex.lab.y = 0.5,
                zlim = c(-1,1),
                main = paste("Module-trait relationships"))
-
 # Now we can save the relevant modules data frame as well
 low_pval <- apply(module_trait_pvalue, 1,
                   function(x)(any(x < 0.05)))
@@ -395,6 +395,17 @@ plotEigengeneNetworks (MEs,
                        xLabelsAngle = 90)
 
 ```
+#### TESTING
+This is a test to check if the heatmaps are informative enough.
+```{r, eval = FALSE, echo = FALSE}
+col = colorpanel(300, 'purple','black','yellow')
+colorsA1 = names(table(moduleColors))
+pdf("Heatmap.pdf",height=9,width=9)
+for (c in 1:length(colorsA1)){
+      module_colors == colorsA1[c]
+      heatmap.2(t(input_mat[module_colors==colorsA1[c]]), scale = "row", col=col, density.info ="none", trace="none", cexCol=0.5, cexRow=0.8, margin=c(19,11), main = colorsA1[c], Colv = FALSE)
+      }; dev.off()
+```
 
 ```{r module_trait_specific, eval = TRUE, echo = FALSE}
 gene_mod_membership <- as.data.frame (cor (input_mat, MEs, use = "p"))
@@ -436,7 +447,7 @@ all_GSPvalue <- do.call(cbind, GSPvalue_list)
 
 ### Connectivity
 Studying connectivity and relating it to previously obtained values such as module membership, we can gather additional information of interest, such as identifying hub genes (highly connected genes)
-```{r connectivity, eval = TRUE, echo = TRUE}
+```{r connectivity, eval = FALSE, echo = FALSE}
 # The function intramodularConnectivity computes the whole network connectivity kTotal, the within module connectivity kWithin, kOut=kTotal-kWithin, and kDiff=kIn-kOut=2*kIN-kTotal
 gene_k <- intramodularConnectivity.fromExpr(input_mat, module_colors, power = picked_power)
 row.names(gene_k) <- colnames(input_mat)
