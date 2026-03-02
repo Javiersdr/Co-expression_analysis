@@ -62,8 +62,7 @@ DEG_FILE <- "AllGenes_allContrast_TREAT-P-0.05_FC-1.5_2024-05-13_01.02.57.tsv"
 THREADS = 16
 min_module_size <- 30
 merge_cut_height <- 0.25
-power_diss <- 10
-# Lower this number according to your RAM. However, 64 Gb should be okay for 30000 genes
+# Lower this number below according to your RAM. However, 64 Gb should be okay for 30000 genes
 max_block_size <- 30000
 # num_thresh is for genes you want to filter out because of low expression
 # For example, 1 will eliminate genes whose expression is < 1 in in num_samples samples
