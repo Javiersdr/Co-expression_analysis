@@ -64,11 +64,19 @@ min_module_size <- 30
 merge_cut_height <- 0.25
 # Lower this number below according to your RAM. However, 64 Gb should be okay for 30000 genes
 max_block_size <- 30000
-# num_thresh is for genes you want to filter out because of low expression
-# For example, 1 will eliminate genes whose expression is < 1 in in num_samples samples
+
+# filter type should be a number between 1 and 3.
+# 1: raw normalized expression-based filtering; 2: mean-based filtering; 3: variance-based filtering
+filter_type <- 1
+# num_thresh is the threshold that will be used to filter out genes if filter_type is 1
+# num_samples determines how many samples will be needed to be overcome by num_thresh
+# For example, 1 will eliminate genes whose expression is < 1 in as many samples as num_samples indicate
 # So, num_thresh = 1 and num_samples = 2 means only genes with expression higher than 1 in at least 2 samples will stay
 num_thresh <- 1
 num_samples <- 2
+# if filter_type is 2 or 3, you will need to adjust the quantile threshold
+quantile_thresh <- 0.25
+
 # This parameter allows to get more modules the higher it is (integer from 0 to 4)
 deepSplit <- 2
 

@@ -40,7 +40,7 @@ This analysis will result in an HTML report with images that give you informatio
 
 - `gene_modules_auto.tsv`: This file contains two columns. The first one shows the gene IDs and the second one the module each gene belongs to.
 - `fisher_result_greater_auto.tsv`: This file contains the result of the Fisher test that statistically checks if any module contains a significantly high amount of DEGs, if performed.
--`gene_modules_significant_cor.tsv`: This file is similar to `gene_modules_auto.tsv`, but it only has information about those modules that were significantly correlated with at least one trait.
+- `gene_modules_significant_cor.tsv`: This file is similar to `gene_modules_auto.tsv`, but it only has information about those modules that were significantly correlated with at least one trait.
 
 ## Utils
 

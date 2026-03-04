@@ -66,6 +66,7 @@ library (tidyverse)
 library (limma)
 #library (Mfuzz)
 library (gplots)
+library(MatrixStats)
 library (DT)
 ```
 
@@ -129,21 +130,21 @@ data <- read.table(initial_data, header = T, sep = "\t", row.names = 1)
 data_matrix <- as.matrix(data)
 #row.names(data_matrix) = data$GeneID
 
-# Keep the quantile_num genes
-#gene_means <- rowMeans(data_matrix)
-#cutoff <- quantile(gene_means, probs = num_quantile)
-#data_matrix <- data_matrix[gene_means > cutoff, ]
-data_matrix <- data_matrix[rowSums(data_matrix >= num_thresh) > num_samples, ]
 
-# mean filter
-#mean_expression <- rowMeans(data_matrix)
-#mean_threshold <- quantile(mean_expression, 0.5)
-#data_matrix <- data_matrix[mean_expression > mean_threshold, ]
-
-# variance filter
-#var_threshold <- 0.5
-#data_matrix <- data_matrix[apply(data_matrix, 1, var) > var_threshold, ]
-
+if (filter_type == 1) {
+  # Raw normalized expression filter
+  data_matrix <- data_matrix[rowSums(data_matrix >= num_thresh, na.rm = TRUE) >= num_samples, ]
+} else if (filter_type == 2) {
+  # mean filter
+  mean_expression <- rowMeans(data_matrix, na.rm = TRUE)
+  mean_quantile <- quantile(mean_expression, quantile_thresh, na.rm = TRUE)
+  data_matrix <- data_matrix[mean_expression > mean_quantile,]
+} else if (filter_type == 3) {
+  # variance filter
+  var_expression <- rowVars(data_matrix, na.rm = TRUE)
+  var_quantile <- quantile(var_expression, quantile_thresh, na.rm = TRUE)
+  data_matrix <- data_matrix[var_expression > var_quantile,]  
+}
 ```
 
 # Co-expression analysis
