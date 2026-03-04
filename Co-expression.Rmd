@@ -111,10 +111,10 @@ save_df <- function (data_to_save,
 |  DEG data | `r DEG_data`|
 | Minimum module size | `r min_module_size`|
 | Cutoff to merge modules | `r merge_cut_height`|
+| Type of filtering | `r filter_type`|
 | Expression threshold | `r num_thresh`|
-| Heatmap | `r plot_heatmap`|
-| Gene expression cutoff for Mfuzz |`r eset_thres`|
-| Number of clusters | `r n_clusters`|
+| Number of samples for `num_thresh`| `r num_samples`|
+| Quantile to keep genes based on mean or variance | `r quantile_thresh`|
 | Time labels | `r time_labels`|
 | Results path | `r results_path`|
 | Expression threshold | `r num_thresh`|

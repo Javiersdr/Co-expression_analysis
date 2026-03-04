@@ -23,15 +23,17 @@ There is a **DON'T TOUCH: CLEAN START** text that must not be modified. Below it
 - `INITIAL_FILE`: The file with your data matrix. This file must be normalised. You can see one in the `example` folder.
 - `TRAIT_FILE`: A file with trait information. You can see one in the `example` folder.
 - `DO_DEGS`: This boolean (TRUE/FALSE) determines if a Fisher-test will be performed to check if any module has a significant number of differentially expressed genes (DEGs). Of course, it would be necessary to perform a differential expression analysis first.
-- `DEG_FILE`: The file with the DEGs.
+- `DEG_FILE`: The file with the DEGs. For now, this file should be an output of [RSeqFlow](https://github.com/mgclaros/RSeqFlow)
 
 **WGCNA parametrisation**:
 - `THREADS`: Number of threads for the WGCNA functions that can be parallelised.
 - `min_module_size`: How many genes must any module have at minimum.
 - `merge_cut_height`: A value for the dendrogram cut to merge modules.
 - `max_block_size`: Sometimes, there are so many genes it would take too much memory to perform the analysis. This is the parameter to determine how big should any block of genes be. 30000 is a good number for 64 Gb, but keep in mind the amount of RAM needed grows exponentially.
-- `num_thresh`:
-- `num_samples`:
+- `filter_type`: An number between 1 and 3 that determines which filtering method should be used. 1: raw expression-based filtering; 2: mean-based filtering; 3: variance-based filtering.
+- `num_thresh`: Expression value used for filtering out low-expression genes.
+- `num_samples`: The minimum number of samples in which a gene must have expression ≥ `num_thresh` to be retained.
+- `quantile_thresh`: The quantile of genes to keep when applying mean or variance filtering.
 - `deepSplit`: This is a somehow obscure WGCNA parameter that goes from 0 to 4 returning a higher amount of modules the bigger it is.
 
 ## Output
